@@ -1,0 +1,22 @@
+{
+    "name": "ksf/ksf-shipping-core",
+    "description": "Framework-agnostic shipping rate calculator extracted from WooCommerce Shipping",
+    "type": "library",
+    "license": "GPL-3.0-or-later",
+    "autoload": {
+        "psr-4": {
+            "Ksf\\Shipping\\": "src/Shipping/"
+        }
+    },
+    "require": {
+        "php": ">=7.3"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "1.0.x-dev"
+        }
+    }
+}
