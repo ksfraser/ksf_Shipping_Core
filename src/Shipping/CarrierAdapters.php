@@ -2,87 +2,139 @@
 namespace Ksf\Shipping;
 
 /**
- * Canadian Carrier API Adapter Interface
- */
-interface CarrierAdapterInterface {
-    
-    /**
-     * Get carrier name
-     */
-    public function getName(): string;
-    
-    /**
-     * Check if carrier supports guest quotes
-     */
-    public function supportsGuestQuotes(): bool;
-    
-    /**
-     * Get shipping rates
-     * 
-     * @param array $from Store address
-     * @param array $to Customer address  
-     * @param array $parcel Weight, dimensions, parcel class
-     * @param array $options Additional options
-     * @return array Rate quotes with service codes
-     */
-    public function getRates(array $from, array $to, array $parcel, array $options = []): array;
-    
-    /**
-     * Validate configuration
-     */
-    public function validateConfig(): bool;
-}
-
-/**
- * Canada Post Adapter
+ * Canada Post API Integration
  */
 class CanadaPostAdapter implements CarrierAdapterInterface {
     
     private $config;
     private $apiUrl = 'https://soa-gw.canadapost.ca/rs/';
+    private $customerNumber;
+    private $apiKey;
+    private $contractId;
+    private $testMode;
     
     public function __construct(array $config) {
         $this->config = $config;
+        $this->apiKey = $config['api_key'] ?? '';
+        $this->customerNumber = $config['customer_number'] ?? '';
+        $this->contractId = $config['contract_id'] ?? '';
+        $this->testMode = $config['test_mode'] ?? false;
+        
+        if ($this->testMode) {
+            $this->apiUrl = 'https://soa-gw.canadapost.ca/rs/'; // Same URL for test
+        }
     }
     
-    public function getName(): string {
-        return 'Canada Post';
-    }
-    
-    public function supportsGuestQuotes(): bool {
-        return false; // Requires API credentials
-    }
+    public function getName(): string { return 'Canada Post'; }
+    public function supportsGuestQuotes(): bool { return false; }
     
     public function getRates(array $from, array $to, array $parcel, array $options = []): array {
-        // Canada Post API requires:
-        // - customerNumber (from config)
-        // - API Key (from config)
-        // - Origin postal code, Destination postal code
-        // - Weight (kg), Dimensions (cm)
-        // - Parcel class (regular, expedited, xpresspost, priority)
+        if (!$this->validateConfig()) {
+            return [];
+        }
         
         $rates = [];
-        
-        // Build request based on Canada Post API
-        $services = ['DOM.EP', 'DOM.XP', 'DOM.PC', 'DOM.RP']; // Expedited, Xpresspost, Priority, Regular
+        $services = ['DOM.EP', 'DOM.XP', 'DOM.PC', 'DOM.RP', 'DOM.CP']; // Expedited, Xpresspost, Priority, Regular, Collect
         
         foreach ($services as $serviceCode) {
-            // API call to Canada Post
-            // This is a placeholder - actual implementation would use cURL/Guzzle
-            $rates[] = [
-                'service_code' => $serviceCode,
-                'service_name' => $this->getServiceName($serviceCode),
-                'rate' => 0, // Will be populated from API
-                'currency' => 'CAD',
-                'transit_days' => 0
-            ];
+            $rate = $this->getRateForService($serviceCode, $from, $to, $parcel, $options);
+            if ($rate !== null) {
+                $rates[] = $rate;
+            }
         }
         
         return $rates;
     }
     
+    private function getRateForService(string $serviceCode, array $from, array $to, array $parcel, array $options): ?array {
+        $endpoint = $this->apiUrl . $this->customerNumber . '/rs/ship/price';
+        
+        $requestBody = [
+            'service-code' => $serviceCode,
+            'origin-postal-code' => $this->normalizePostalCode($from['post_code'] ?? $from['zip'] ?? ''),
+            'destination' => [
+                'domestic-address' => [
+                    'postal-code' => $this->normalizePostalCode($to['post_code'] ?? $to['zip'] ?? '')
+                ]
+            ],
+            'parcel-characteristics' => [
+                'weight' => max(0.001, $parcel['weight'] ?? 0.1), // kg, min 1g
+                'dimensions' => [
+                    'length' => max(1, $parcel['length'] ?? 1),
+                    'width' => max(1, $parcel['width'] ?? 1),
+                    'height' => max(1, $parcel['height'] ?? 1)
+                ]
+            ],
+            'options' => [
+                'option' => $this->buildOptions($options)
+            ]
+        ];
+        
+        $headers = [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'Authorization: Basic ' . base64_encode($this->apiKey . ':')
+        ];
+        
+        $response = $this->makeRequest($endpoint, $requestBody, $headers);
+        
+        if ($response === false || !isset($response['price'])) {
+            return null;
+        }
+        
+        return [
+            'service_code' => $serviceCode,
+            'service_name' => $this->getServiceName($serviceCode),
+            'rate' => (float)($response['price'][0]['due'][0]['amount'][0] ?? 0),
+            'currency' => $response['price'][0]['due'][0]['currency-code'][0] ?? 'CAD',
+            'transit_days' => (int)($response['service-standard'][0]['expected-transit-time'][0] ?? 0)
+        ];
+    }
+    
+    private function normalizePostalCode(string $postalCode): string {
+        // Remove spaces, uppercase
+        return strtoupper(str_replace(' ', '', $postalCode));
+    }
+    
+    private function buildOptions(array $options): array {
+        $apiOptions = [];
+        
+        if ($options['signature'] ?? false) {
+            $apiOptions[] = ['option-code' => 'SO'];
+        }
+        if ($options['insurance'] ?? false) {
+            $apiOptions[] = ['option-code' => 'COV'];
+        }
+        if ($options['delivery_confirmation'] ?? false) {
+            $apiOptions[] = ['option-code' => 'DC'];
+        }
+        
+        return $apiOptions;
+    }
+    
+    private function makeRequest(string $url, array $body, array $headers) {
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode !== 200) {
+            error_log("Canada Post API error: HTTP $httpCode - $response");
+            return false;
+        }
+        
+        $xml = simplexml_load_string($response);
+        return json_decode(json_encode($xml), true);
+    }
+    
     public function validateConfig(): bool {
-        return !empty($this->config['api_key']) && !empty($this->config['customer_number']);
+        return !empty($this->apiKey) && !empty($this->customerNumber);
     }
     
     private function getServiceName(string $code): string {
@@ -90,183 +142,9 @@ class CanadaPostAdapter implements CarrierAdapterInterface {
             'DOM.EP' => 'Expedited Parcel',
             'DOM.XP' => 'Xpresspost',
             'DOM.PC' => 'Priority',
-            'DOM.RP' => 'Regular Parcel'
+            'DOM.RP' => 'Regular Parcel',
+            'DOM.CP' => 'Collect'
         ];
         return $names[$code] ?? $code;
-    }
-}
-
-/**
- * UPS Canada Adapter
- */
-class UPS_CanadaAdapter implements CarrierAdapterInterface {
-    
-    private $config;
-    private $apiUrl = 'https://onlinetools.ups.com/api/rating/v1/';
-    
-    public function __construct(array $config) {
-        $this->config = $config;
-    }
-    
-    public function getName(): string {
-        return 'UPS Canada';
-    }
-    
-    public function supportsGuestQuotes(): bool {
-        return false; // Requires OAuth token
-    }
-    
-    public function getRates(array $from, array $to, array $parcel, array $options = []): array {
-        // UPS API requires:
-        // - OAuth Token (from config)
-        // - Shipper number (from config)
-        // - From/To postal codes
-        // - Weight, Dimensions
-        // - Service codes (01=Next Day, 02=2nd Day, 03=Ground, etc.)
-        
-        $rates = [];
-        
-        // Placeholder for UPS API integration
-        return $rates;
-    }
-    
-    public function validateConfig(): bool {
-        return !empty($this->config['oauth_token']) || (!empty($this->config['user_id']) && !empty($this->config['password']));
-    }
-}
-
-/**
- * FedEx Canada Adapter
- */
-class FedEx_CanadaAdapter implements CarrierAdapterInterface {
-    
-    private $config;
-    private $apiUrl = 'https://apis.fedex.com/rate/v1/';
-    
-    public function __construct(array $config) {
-        $this->config = $config;
-    }
-    
-    public function getName(): string {
-        return 'FedEx Canada';
-    }
-    
-    public function supportsGuestQuotes(): bool {
-        return false; // Requires API credentials
-    }
-    
-    public function getRates(array $from, array $to, array $parcel, array $options = []): array {
-        // FedEx API requires:
-        // - Client ID + Client Secret (OAuth)
-        // - From/To postal codes
-        // - Weight, Dimensions
-        // - Service types (PRIORITY_OVERNIGHT, FEDEX_GROUND, etc.)
-        
-        $rates = [];
-        
-        // Placeholder for FedEx API integration
-        return $rates;
-    }
-    
-    public function validateConfig(): bool {
-        return !empty($this->config['client_id']) && !empty($this->config['client_secret']);
-    }
-}
-
-/**
- * DHL Canada Adapter
- */
-class DHL_CanadaAdapter implements CarrierAdapterInterface {
-    
-    private $config;
-    private $apiUrl = 'https://api-eu.dhl.com/parcel/de/shipping/v2/rates';
-    
-    public function __construct(array $config) {
-        $this->config = $config;
-    }
-    
-    public function getName(): string {
-        return 'DHL Canada';
-    }
-    
-    public function supportsGuestQuotes(): bool {
-        return false; // Requires API key
-    }
-    
-    public function getRates(array $from, array $to, array $parcel, array $options = []): array {
-        // DHL API integration placeholder
-        return [];
-    }
-    
-    public function validateConfig(): bool {
-        return !empty($this->config['api_key']);
-    }
-}
-
-/**
- * Purolator Adapter
- */
-class PurolatorAdapter implements CarrierAdapterInterface {
-    
-    private $config;
-    private $apiUrl = 'https://webservices.purolator.com/Estimating/EstimatingService.asmx';
-    
-    public function __construct(array $config) {
-        $this->config = $config;
-    }
-    
-    public function getName(): string {
-        return 'Purolator';
-    }
-    
-    public function supportsGuestQuotes(): bool {
-        return false; // Requires API key + activation key
-    }
-    
-    public function getRates(array $from, array $to, array $parcel, array $options = []): array {
-        // Purolator API requires:
-        // - API Key + Activation Key
-        // - From/To postal codes  
-        // - Weight, Dimensions
-        // - Service types (PurolatorExpress, PurolatorGround, etc.)
-        
-        $rates = [];
-        
-        // Placeholder for Purolator API integration
-        return $rates;
-    }
-    
-    public function validateConfig(): bool {
-        return !empty($this->config['api_key']) && !empty($this->config['activation_key']);
-    }
-}
-
-/**
- * Canpar Adapter
- */
-class CanparAdapter implements CarrierAdapterInterface {
-    
-    private $config;
-    private $apiUrl = 'https://www.canpar.com/';
-    
-    public function __construct(array $config) {
-        $this->config = $config;
-    }
-    
-    public function getName(): string {
-        return 'Canpar';
-    }
-    
-    public function supportsGuestQuotes(): bool {
-        return true; // May support guest quotes
-    }
-    
-    public function getRates(array $from, array $to, array $parcel, array $options = []): array {
-        // Canpar API integration placeholder
-        return [];
-    }
-    
-    public function validateConfig(): bool {
-        return !empty($this->config['api_key']) || (!empty($this->config['username']) && !empty($this->config['password']));
     }
 }
