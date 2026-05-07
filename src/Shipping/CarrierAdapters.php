@@ -2,30 +2,26 @@
 namespace Ksf\Shipping;
 
 /**
- * Canada Post API Integration
+ * FedEx Canada API Integration
+ * Documentation: https://developer.fedex.com/api/en-us/home.html
  */
-class CanadaPostAdapter implements CarrierAdapterInterface {
+class FedEx_CanadaAdapter implements CarrierAdapterInterface {
     
     private $config;
-    private $apiUrl = 'https://soa-gw.canadapost.ca/rs/';
-    private $customerNumber;
-    private $apiKey;
-    private $contractId;
+    private $apiUrl = 'https://apis.fedex.com/rate/v1/';
+    private $accessToken;
     private $testMode;
     
     public function __construct(array $config) {
         $this->config = $config;
-        $this->apiKey = $config['api_key'] ?? '';
-        $this->customerNumber = $config['customer_number'] ?? '';
-        $this->contractId = $config['contract_id'] ?? '';
         $this->testMode = $config['test_mode'] ?? false;
         
         if ($this->testMode) {
-            $this->apiUrl = 'https://soa-gw.canadapost.ca/rs/'; // Same URL for test
+            $this->apiUrl = 'https://apis-sandbox.fedex.com/rate/v1/';
         }
     }
     
-    public function getName(): string { return 'Canada Post'; }
+    public function getName(): string { return 'FedEx Canada'; }
     public function supportsGuestQuotes(): bool { return false; }
     
     public function getRates(array $from, array $to, array $parcel, array $options = []): array {
@@ -33,11 +29,26 @@ class CanadaPostAdapter implements CarrierAdapterInterface {
             return [];
         }
         
-        $rates = [];
-        $services = ['DOM.EP', 'DOM.XP', 'DOM.PC', 'DOM.RP', 'DOM.CP']; // Expedited, Xpresspost, Priority, Regular, Collect
+        // Get OAuth token
+        if (empty($this->accessToken)) {
+            $this->accessToken = $this->getOAuthToken();
+            if (empty($this->accessToken)) {
+                return [];
+            }
+        }
         
-        foreach ($services as $serviceCode) {
-            $rate = $this->getRateForService($serviceCode, $from, $to, $parcel, $options);
+        $rates = [];
+        $services = [
+            'FEDEX_GROUND' => 'FedEx Ground',
+            'FEDEX_2_DAY' => 'FedEx 2Day',
+            'FEDEX_EXPRESS_SAVER' => 'FedEx Economy',
+            'STANDARD_OVERNIGHT' => 'Standard Overnight',
+            'PRIORITY_OVERNIGHT' => 'Priority Overnight',
+            'FEDEX_FIRST_FREIGHT' => 'FedEx First Freight'
+        ];
+        
+        foreach ($services as $code => $name) {
+            $rate = $this->getRateForService($code, $from, $to, $parcel, $options);
             if ($rate !== null) {
                 $rates[] = $rate;
             }
@@ -46,70 +57,122 @@ class CanadaPostAdapter implements CarrierAdapterInterface {
         return $rates;
     }
     
+    private function getOAuthToken(): string {
+        $clientId = $this->config['client_id'] ?? '';
+        $clientSecret = $this->config['client_secret'] ?? '';
+        
+        $endpoint = $this->testMode 
+            ? 'https://apis-sandbox.fedex.com/oauth/token'
+            : 'https://apis.fedex.com/oauth/token';
+        
+        $ch = curl_init($endpoint);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, 'grant_type=client_credentials');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/x-www-form-urlencoded',
+            'Authorization: Basic ' . base64_encode($clientId . ':' . $clientSecret)
+        ]);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode !== 200) {
+            error_log("FedEx OAuth error: HTTP $httpCode");
+            return '';
+        }
+        
+        $data = json_decode($response, true);
+        return $data['access_token'] ?? '';
+    }
+    
     private function getRateForService(string $serviceCode, array $from, array $to, array $parcel, array $options): ?array {
-        $endpoint = $this->apiUrl . $this->customerNumber . '/rs/ship/price';
+        $endpoint = $this->apiUrl . 'rates/quotes';
         
         $requestBody = [
-            'service-code' => $serviceCode,
-            'origin-postal-code' => $this->normalizePostalCode($from['post_code'] ?? $from['zip'] ?? ''),
-            'destination' => [
-                'domestic-address' => [
-                    'postal-code' => $this->normalizePostalCode($to['post_code'] ?? $to['zip'] ?? '')
-                ]
+            'accountNumber' => [
+                'value' => $this->config['account_number'] ?? ''
             ],
-            'parcel-characteristics' => [
-                'weight' => max(0.001, $parcel['weight'] ?? 0.1), // kg, min 1g
-                'dimensions' => [
-                    'length' => max(1, $parcel['length'] ?? 1),
-                    'width' => max(1, $parcel['width'] ?? 1),
-                    'height' => max(1, $parcel['height'] ?? 1)
+            'requestedShipment' => [
+                'shipper' => [
+                    'address' => [
+                        'postalCode' => $this->normalizePostalCode($from['post_code'] ?? ''),
+                        'countryCode' => $from['country'] ?? 'CA'
+                    ]
+                ],
+                'recipient' => [
+                    'address' => [
+                        'postalCode' => $this->normalizePostalCode($to['post_code'] ?? ''),
+                        'countryCode' => $to['country'] ?? 'CA'
+                    ]
+                ],
+                'pickupType' => 'REGULAR_PICKUP',
+                'serviceType' => $serviceCode,
+                'rateRequestType' => ['LIST'],
+                'packagingType' => 'YOUR_PACKAGING',
+                'totalWeight' => [
+                    'value' => max(0.1, $parcel['weight'] ?? 0.1),
+                    'units' => 'KG'
+                ],
+                'items' => [
+                    [
+                        'weight' => [
+                            'value' => max(0.1, $parcel['weight'] ?? 0.1),
+                            'units' => 'KG'
+                        ],
+                        'dimensions' => [
+                            'length' => max(1, $parcel['length'] ?? 1),
+                            'width' => max(1, $parcel['width'] ?? 1),
+                            'height' => max(1, $parcel['height'] ?? 1),
+                            'units' => 'CM'
+                        ]
+                    ]
                 ]
-            ],
-            'options' => [
-                'option' => $this->buildOptions($options)
             ]
         ];
         
         $headers = [
             'Content-Type: application/json',
-            'Accept: application/json',
-            'Authorization: Basic ' . base64_encode($this->apiKey . ':')
+            'Authorization: Bearer ' . $this->accessToken
         ];
         
         $response = $this->makeRequest($endpoint, $requestBody, $headers);
         
-        if ($response === false || !isset($response['price'])) {
+        if ($response === false || !isset($response['output']['rateReplyDetails'][0])) {
+            return null;
+        }
+        
+        $rateDetail = $response['output']['rateReplyDetails'][0];
+        $netCharge = $rateDetail['ratedShipmentDetails'][0]['totalNetCharge'] ?? null;
+        
+        if (!$netCharge) {
             return null;
         }
         
         return [
             'service_code' => $serviceCode,
             'service_name' => $this->getServiceName($serviceCode),
-            'rate' => (float)($response['price'][0]['due'][0]['amount'][0] ?? 0),
-            'currency' => $response['price'][0]['due'][0]['currency-code'][0] ?? 'CAD',
-            'transit_days' => (int)($response['service-standard'][0]['expected-transit-time'][0] ?? 0)
+            'rate' => (float)($netCharge['amount'] ?? 0),
+            'currency' => $netCharge['currency'] ?? 'CAD',
+            'transit_days' => 0 // FedEx doesn't always return transit time in rate quotes
         ];
     }
     
     private function normalizePostalCode(string $postalCode): string {
-        // Remove spaces, uppercase
         return strtoupper(str_replace(' ', '', $postalCode));
     }
     
-    private function buildOptions(array $options): array {
-        $apiOptions = [];
-        
-        if ($options['signature'] ?? false) {
-            $apiOptions[] = ['option-code' => 'SO'];
-        }
-        if ($options['insurance'] ?? false) {
-            $apiOptions[] = ['option-code' => 'COV'];
-        }
-        if ($options['delivery_confirmation'] ?? false) {
-            $apiOptions[] = ['option-code' => 'DC'];
-        }
-        
-        return $apiOptions;
+    private function getServiceName(string $code): string {
+        $names = [
+            'FEDEX_GROUND' => 'FedEx Ground',
+            'FEDEX_2_DAY' => 'FedEx 2Day',
+            'FEDEX_EXPRESS_SAVER' => 'FedEx Economy',
+            'STANDARD_OVERNIGHT' => 'Standard Overnight',
+            'PRIORITY_OVERNIGHT' => 'Priority Overnight'
+        ];
+        return $names[$code] ?? $code;
     }
     
     private function makeRequest(string $url, array $body, array $headers) {
@@ -125,26 +188,14 @@ class CanadaPostAdapter implements CarrierAdapterInterface {
         curl_close($ch);
         
         if ($httpCode !== 200) {
-            error_log("Canada Post API error: HTTP $httpCode - $response");
+            error_log("FedEx API error: HTTP $httpCode - $response");
             return false;
         }
         
-        $xml = simplexml_load_string($response);
-        return json_decode(json_encode($xml), true);
+        return json_decode($response, true);
     }
     
     public function validateConfig(): bool {
-        return !empty($this->apiKey) && !empty($this->customerNumber);
-    }
-    
-    private function getServiceName(string $code): string {
-        $names = [
-            'DOM.EP' => 'Expedited Parcel',
-            'DOM.XP' => 'Xpresspost',
-            'DOM.PC' => 'Priority',
-            'DOM.RP' => 'Regular Parcel',
-            'DOM.CP' => 'Collect'
-        ];
-        return $names[$code] ?? $code;
+        return !empty($this->config['client_id']) && !empty($this->config['client_secret']);
     }
 }
