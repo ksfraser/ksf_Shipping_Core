@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="vendor/autoload.php"
+         colors="true"
+         verbose="true"
+         stopOnFailure="false">
+    
+    <testsuites>
+        <testsuite name="Unit Tests">
+            <file>tests/ShippingCalculatorTest.php</file>
+        </testsuite>
+        
+        <testsuite name="Integration Tests">
+            <file>tests/CanadaPostIntegrationTest.php</file>
+            <file>tests/UPS_IntegrationTest.php</file>
+            <file>tests/EndToEndIntegrationTest.php</file>
+        </testsuite>
+    </testsuites>
+    
+    <groups>
+        <group name="integration">
+            <include>tests/*IntegrationTest.php</include>
+            <include>tests/EndToEnd*.php</include>
+        </group>
+    </groups>
+    
+    <filter>
+        <whitelist processUncoveredFilesFromWhitelist="true">
+            <directory suffix=".php">src/</directory>
+        </whitelist>
+    </filter>
+    
+    <logging>
+        <log type="coverage-html" target="build/coverage"/>
+        <log type="junit" target="build/junit.xml"/>
+    </logging>
+</phpunit>
