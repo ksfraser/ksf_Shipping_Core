@@ -1,10 +1,10 @@
 <?php
-namespace Ksf\Shipping\Tests;
+namespace Ksfraser\Shipping\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Ksf\Shipping\ShippingCalculator;
-use Ksf\Shipping\FlatRateMethod;
-use Ksf\Shipping\FreeShippingMethod;
+use Ksfraser\Shipping\ShippingCalculator;
+use Ksfraser\Shipping\FlatRateMethod;
+use Ksfraser\Shipping\FreeShippingMethod;
 
 class ShippingCalculatorTest extends TestCase {
     

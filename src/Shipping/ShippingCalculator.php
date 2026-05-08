@@ -1,5 +1,5 @@
 <?php
-namespace Ksf\Shipping;
+namespace Ksfraser\Shipping;
 
 /**
  * Framework-agnostic Shipping Rate Calculator

@@ -1,5 +1,5 @@
 <?php
-namespace Ksf\Shipping;
+namespace Ksfraser\Shipping;
 
 /**
  * Shipping Method Interface

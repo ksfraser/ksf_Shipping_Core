@@ -1,5 +1,5 @@
 <?php
-namespace Ksf\Shipping;
+namespace Ksfraser\Shipping;
 
 /**
  * Enhanced Shipping Calculator with Canadian Carrier Support
