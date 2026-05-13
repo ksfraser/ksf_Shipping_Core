@@ -3,7 +3,7 @@
         'name' => 'ksf/ksf-shipping-core',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => 'a4df5c71786f7b9f935463d8e86c953e5b391b70',
+        'reference' => 'ceee6e96211c92b19f4196ab0afbb5fddce3fa85',
         'type' => 'library',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(
@@ -24,7 +24,7 @@
         'ksf/ksf-shipping-core' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => 'a4df5c71786f7b9f935463d8e86c953e5b391b70',
+            'reference' => 'ceee6e96211c92b19f4196ab0afbb5fddce3fa85',
             'type' => 'library',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(
