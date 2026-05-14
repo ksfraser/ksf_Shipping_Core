@@ -114,6 +114,7 @@ class ShippingCalculatorTest extends TestCase {
     }
     
     public function testCheapestRate(): void {
+        $this->calculator->addPackage(['weight' => 1]);
         $this->calculator->registerMethod(new FlatRateMethod([
             'title' => 'Express', 'cost' => 25.00, 'enabled' => true
         ]));
@@ -123,6 +124,7 @@ class ShippingCalculatorTest extends TestCase {
         
         $cheapest = $this->calculator->getCheapestRate([]);
         
+        $this->assertNotNull($cheapest);
         $this->assertEquals('Standard', $cheapest['title']);
         $this->assertEquals(10.00, $cheapest['cost']);
     }

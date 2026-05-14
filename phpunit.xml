@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="vendor/autoload.php"
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
          colors="true"
          verbose="true"
          stopOnFailure="false">
@@ -16,21 +18,9 @@
         </testsuite>
     </testsuites>
     
-    <groups>
-        <group name="integration">
-            <include>tests/*IntegrationTest.php</include>
-            <include>tests/EndToEnd*.php</include>
-        </group>
-    </groups>
-    
-    <filter>
-        <whitelist processUncoveredFilesFromWhitelist="true">
+    <source>
+        <include>
             <directory suffix=".php">src/</directory>
-        </whitelist>
-    </filter>
-    
-    <logging>
-        <log type="coverage-html" target="build/coverage"/>
-        <log type="junit" target="build/junit.xml"/>
-    </logging>
+        </include>
+    </source>
 </phpunit>

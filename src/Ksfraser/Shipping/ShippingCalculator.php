@@ -34,10 +34,12 @@ class ShippingCalculator {
     /**
      * Calculate shipping rates for all packages
      * 
-     * @param array $context ['destination'=>['country','state','postcode','city'], 'user_id'=>int]
+     * @param array $context ['destination'=>['country','state','postcode','city'], 'user_id'=>int, 'cart_total'=>float]
+     * @param array $options Additional options (merged into context)
      * @return array Available shipping rates grouped by method
      */
-    public function calculateRates(array $context = []): array {
+    public function calculateRates(array $context = [], array $options = []): array {
+        $context = array_merge($context, $options);
         $availableRates = [];
         
         foreach ($this->methods as $method) {
