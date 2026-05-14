@@ -1,6 +1,8 @@
 <?php
 namespace Ksfraser\Shipping;
 
+use Ksfraser\Shipping\Carrier\CarrierAdapterInterface;
+
 /**
  * Enhanced Shipping Calculator with Canadian Carrier Support
  */

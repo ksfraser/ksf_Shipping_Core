@@ -3,8 +3,8 @@ namespace Ksfraser\Shipping\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Ksfraser\Shipping\CanadianShippingCalculator;
-use Ksfraser\Shipping\Carrier\CanadaPostAdapter;
-use Ksfraser\Shipping\Carrier\UPS_CanadaAdapter;
+use Ksfraser\Shipping\Carrier\FlatRateMethod;
+use Ksfraser\Shipping\Carrier\FreeShippingMethod;
 
 /**
  * End-to-End Integration Test
@@ -13,15 +13,7 @@ use Ksfraser\Shipping\Carrier\UPS_CanadaAdapter;
  */
 class EndToEndIntegrationTest extends TestCase {
     
-    public function testCalculatorWithCanadaPost(): void {
-        // Skip if no credentials
-        $apiKey = getenv('CP_API_KEY') ?: ($_ENV['CP_API_KEY'] ?? '');
-        $customerNumber = getenv('CP_CUSTOMER_NUMBER') ?: ($_ENV['CP_CUSTOMER_NUMBER'] ?? '');
-        
-        if (empty($apiKey) || empty($customerNumber)) {
-            $this->markTestSkipped('No Canada Post credentials for end-to-end test.');
-        }
-        
+    public function testCalculatorWithFlatRate(): void {
         $calculator = new CanadianShippingCalculator();
         
         $calculator->setStoreAddress([
@@ -33,10 +25,9 @@ class EndToEndIntegrationTest extends TestCase {
             'country' => 'CA'
         ]);
         
-        $calculator->registerCarrier(new CanadaPostAdapter([
-            'api_key' => $apiKey,
-            'customer_number' => $customerNumber,
-            'test_mode' => false
+        $calculator->registerCarrier(new FlatRateMethod([
+            'rate' => 9.99,
+            'name' => 'Flat Rate Shipping'
         ]));
         
         $customerAddress = [
@@ -58,34 +49,53 @@ class EndToEndIntegrationTest extends TestCase {
         $quotes = $calculator->getQuotes($customerAddress, $parcel);
         
         $this->assertIsArray($quotes);
-        $this->assertArrayHasKey('Canada Post', $quotes);
-        $this->assertNotEmpty($quotes['Canada Post']['rates']);
+        $this->assertArrayHasKey('Flat Rate Shipping', $quotes);
+        $this->assertNotEmpty($quotes['Flat Rate Shipping']['rates']);
+    }
+    
+    public function testCalculatorWithFreeShipping(): void {
+        $calculator = new CanadianShippingCalculator();
         
-        echo "\nEnd-to-End Quotes from Canada Post:\n";
-        foreach ($quotes['Canada Post']['rates'] as $rate) {
-            echo sprintf("  %s: $%.2f %s\n", 
-                $rate['service_name'], 
-                $rate['rate'], 
-                $rate['currency']
-            );
-        }
+        $calculator->setStoreAddress([
+            'company' => 'Test Store',
+            'post_code' => 'K1A 0A1',
+            'country' => 'CA'
+        ]);
+        
+        $calculator->registerCarrier(new FreeShippingMethod([
+            'min_order_amount' => 50.00,
+            'name' => 'Free Shipping'
+        ]));
+        
+        $customerAddress = [
+            'post_code' => 'M5B 2H1',
+            'country' => 'CA'
+        ];
+        
+        $parcel = [
+            'weight' => 1.0,
+            'length' => 10,
+            'width' => 10,
+            'height' => 10
+        ];
+        
+        $quotes = $calculator->getQuotes($customerAddress, $parcel, ['order_amount' => 75.00]);
+        
+        $this->assertIsArray($quotes);
+        $this->assertArrayHasKey('Free Shipping', $quotes);
     }
     
     public function testGetCheapestQuote(): void {
-        $apiKey = getenv('CP_API_KEY') ?: ($_ENV['CP_API_KEY'] ?? '');
-        $customerNumber = getenv('CP_CUSTOMER_NUMBER') ?: ($_ENV['CP_CUSTOMER_NUMBER'] ?? '');
-        
-        if (empty($apiKey) || empty($customerNumber)) {
-            $this->markTestSkipped('No Canada Post credentials for end-to-end test.');
-        }
-        
         $calculator = new CanadianShippingCalculator();
-        $calculator->setStoreAddress([
-            'post_code' => 'K1A 0A1', 'country' => 'CA'
-        ]);
-        $calculator->registerCarrier(new CanadaPostAdapter([
-            'api_key' => $apiKey,
-            'customer_number' => $customerNumber
+        
+        $calculator->registerCarrier(new FlatRateMethod([
+            'rate' => 9.99,
+            'name' => 'Standard'
+        ]));
+        
+        $calculator->registerCarrier(new FlatRateMethod([
+            'rate' => 19.99,
+            'name' => 'Express'
         ]));
         
         $cheapest = $calculator->getCheapestQuote(
@@ -95,11 +105,30 @@ class EndToEndIntegrationTest extends TestCase {
         
         $this->assertNotNull($cheapest);
         $this->assertArrayHasKey('rate', $cheapest);
-        $this->assertGreaterThan(0, $cheapest['rate']);
+        $this->assertEquals(9.99, $cheapest['rate']);
+    }
+    
+    public function testCalculatorWithMultipleCarriers(): void {
+        $calculator = new CanadianShippingCalculator();
         
-        echo sprintf("\nCheapest Quote: %s - $%.2f\n", 
-            $cheapest['service_name'], 
-            $cheapest['rate']
+        $calculator->registerCarrier(new FlatRateMethod([
+            'rate' => 9.99,
+            'name' => 'Standard'
+        ]));
+        
+        $calculator->registerCarrier(new FreeShippingMethod([
+            'min_order_amount' => 100.00,
+            'name' => 'Free Over $100'
+        ]));
+        
+        $options = ['order_amount' => 150.00];
+        $quotes = $calculator->getQuotes(
+            ['post_code' => 'M5B 2H1', 'country' => 'CA'],
+            ['weight' => 1.0, 'length' => 10, 'width' => 10, 'height' => 10],
+            $options
         );
+        
+        $this->assertArrayHasKey('Standard', $quotes);
+        $this->assertArrayHasKey('Free Over $100', $quotes);
     }
 }
